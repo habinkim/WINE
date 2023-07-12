@@ -2,6 +2,9 @@ plugins {
     id 'java'
     id 'org.springframework.boot' version '3.1.1'
     id 'io.spring.dependency-management' version '1.1.0'
+    id 'org.asciidoctor.jvm.convert' version '3.3.2'
+    id 'com.epages.restdocs-api-spec' version '0.16.4'
+    id 'org.hidetake.swagger.generator' version '2.19.2'
 }
 
 group = 'com.habin'
@@ -11,15 +14,137 @@ java {
     sourceCompatibility = '17'
 }
 
+configurations {
+    asciidoctorExt
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+ext {
+    set('generated', file("src/main/generated"))
+    set('snippetsDir', file("build/generated-snippets"))
+    set('queryDslVersion', "5.0.0:jakarta")
+    set('mapstructVersion', "1.5.5.Final")
+}
+
 repositories {
     mavenCentral()
 }
 
 dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    developmentOnly 'org.springframework.boot:spring-boot-devtools'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
+
+    // persistence
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    implementation "com.querydsl:querydsl-jpa:${queryDslVersion}"
+    implementation 'com.github.gavlyukovskiy:p6spy-spring-boot-starter:1.9.0'
+    compileOnly 'com.h2database:h2'
+    testCompileOnly 'com.h2database:h2'
+
+    implementation 'com.opencsv:opencsv:5.7.1'
+
+    // Boiler Plate
+    implementation "org.mapstruct:mapstruct:${mapstructVersion}"
+    implementation "org.mapstruct:mapstruct-processor:${mapstructVersion}"
+    compileOnly 'org.projectlombok:lombok'
+
+    // documentation
+    implementation 'com.epages:restdocs-api-spec-mockmvc:0.18.2'
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.1.0'
+    implementation 'org.springdoc:springdoc-openapi-security:1.7.0'
+    asciidoctorExt 'org.springframework.restdocs:spring-restdocs-asciidoctor'
+
+    annotationProcessor(
+            'org.springframework.boot:spring-boot-configuration-processor',
+            "org.mapstruct:mapstruct-processor:${mapstructVersion}",
+            'org.projectlombok:lombok-mapstruct-binding:0.2.0',
+            'org.projectlombok:lombok',
+            "com.querydsl:querydsl-apt:${queryDslVersion}",
+            'jakarta.persistence:jakarta.persistence-api',
+            'jakarta.annotation:jakarta.annotation-api'
+    )
+
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.restdocs:spring-restdocs-mockmvc'
+    testImplementation 'org.springframework.security:spring-security-test'
+
+    testAnnotationProcessor(
+            'org.springframework.boot:spring-boot-configuration-processor',
+            'org.projectlombok:lombok-mapstruct-binding:0.2.0',
+            'org.projectlombok:lombok'
+    )
 }
 
-tasks.named('test') {
+sourceSets {
+    main.java.srcDirs += [generated]
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.annotationProcessorGeneratedSourcesDirectory(file(generated))
+}
+
+compileJava.doFirst {
+    delete file(generated)
+}
+
+tasks.withType(GenerateSwaggerUI).configureEach {
+    dependsOn 'openapi3'
+}
+
+openapi3 {
+    server = "http://localhost:7500"
+    title = "WINE REST API Documentation"
+    description = "Spring REST Docs with SwaggerUI."
+    version = "0.1.0"
+    outputFileNamePrefix = 'wine-open-api-3.0.1'
+    format = 'json'
+
+    outputDirectory = 'src/main/resources/static/docs'
+}
+
+postman {
+    title = 'WINE REST API Documentation'
+    version = '0.1.0'
+    baseUrl = 'http://localhost:8200'
+    outputFileNamePrefix = 'wine-postman-collection'
+
+    outputDirectory = 'src/main/resources/static/docs'
+}
+
+test {
+    outputs.dir snippetsDir
     useJUnitPlatform()
+}
+
+
+asciidoctor {
+    dependsOn test
+    inputs.dir snippetsDir
+    configurations 'asciidoctorExt'
+
+    doFirst {
+        delete {
+            file("src/main/resources/static/docs")
+        }
+    }
+
+    doLast {
+        copy {
+            from(file("build/docs/asciidoc"))
+            into(file("src/main/resources/static/docs"))
+        }
+    }
+}
+
+bootJar {
+    dependsOn 'asciidoctor'
+    dependsOn 'openapi3'
+    dependsOn 'postman'
 }
